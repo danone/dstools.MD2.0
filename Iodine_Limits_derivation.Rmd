@@ -1,0 +1,244 @@
+---
+title:     Deriving limits of iodine concentrations in basepowder 111717
+author:    Katerina Papadimitropoulou
+subtitle:  DRAFT not for circulation
+output: 
+  html_notebook:
+    theme: united
+    toc: yes
+    toc_float : True
+---
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook to provide the code and draft results on exploring methods to derive limits for the concentration of **Iodine** in basepowder 111717. The specification limits per raw material and amount of RM in basepowder are provided.
+
+For BP 111717, specifications' targets and min/max values from monitoring the ingredients (suppliers' info) are provided for 3 out of 5 RMs:
+
+* Skimmed Milk Concentrate (SMC)
+* Sweet Powder WPC 80
+* Sweet WPC 35
+* *Gos Syrup*
+* *Acid WPC*
+
+The **current approach from PD teams** is aggregating over the RM target iodine concentrations in BP to calculate the theoretical target and similarly aggregating over the min/max values. Per BM, the min/max values are calculated as follows:
+
+* Lower limit: $LL = target - 2*std(sample)$
+* Upper limit: $UL = target + 2*std(sample)$
+
+# Bootstrapping approach 
+
+Bootstrap is a computational resampling technique of inference about a population of interest using sample data, with the only input being the procedure for calculating the estimate (or estimator) of interest on a sample of data. It works by treating the observed sample as if it were the population, and we can repeatedly take R number of samples (of the same size as the original sample), *with replacement*. For each of these R samples, we then calculate the estimate of interest, in this case the mean and a $95\%$ confidence interval.
+
+# SMC
+There are 11 measurements of iodine concentrations in SMC from RM monitoring program, ranging from 21 to 31 $\mu g/100g$. A scatterplot of concentrations vs production date is provided with the solid red line corresponding to the target/mean concentration of iodine and  the dotted red lines are the min/max values from specifications which coincide with $\mu\pm2*sd$
+```{r}
+library(ggplot2)
+setwd("/lustre/workgroups/datasciences/_papadika")
+SMC<- read.table("SMC.txt", header=TRUE, sep="")
+SMC
+
+SMC<- SMC[order(as.Date(SMC$Production_date, format = "%d/%m/%Y")),]
+
+p <- ggplot(SMC, aes(x=Production_date, y=Result, group=Material))+  
+  geom_point(size=2, shape=23) + geom_line(color="#014d64") +
+  geom_line(aes(y = 26.4), color = "red", size=0.7,  linetype = "solid") +
+  geom_line(aes(y = 20.23), color = "red", size=0.7,  linetype = "dotted") +
+  geom_line(aes(y = 32.68), color = "red", size=0.7,  linetype = "dotted") +
+  #geom_line(aes(y = mean(Result)+2*sd(Result)),  color = "blue", size=0.7,  linetype = "solid") +
+  facet_grid(Hersteller ~.)+ 
+  scale_x_discrete(limits=SMC$Production_date)+
+  theme_classic() + xlab("Production Date") + ylab("Iodine levels")+ theme(panel.border = element_blank(), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+                                                                           panel.grid.major = element_blank(),
+                                                                           panel.grid.minor = element_blank())
+
+p + labs(title = "SMC")
+df <- data.frame(SMC)
+ggplot(df, aes(x=Result)) + 
+ geom_histogram(aes(y=..density..), colour="black", fill="white")+
+ geom_density(alpha=.2, fill="#FF6666") +xlim(18, 35) + ylim(0, 0.3) 
+```
+
+## Try bootstrapping 
+We take 10000 samples of 11 measurements each *with replacement* from the original dataset. That means that some values might be picked more than once in a random draw and some not at all. From each of these 10000 samples we record the mean and two percentiles, $2.5\%$ and $97.5\%$ of the iodine levels samples'.
+```{r}
+library(boot)
+set.seed(1)
+# Create a function to take a resample of the values, # and then calculate the mean
+boot_quantiles_SMC<- function(original_vector, resample_vector) {
+   cbind(mean(original_vector[resample_vector]), quantile(original_vector[resample_vector], c(0.025, 0.975)) )
+}
+
+# R is number of replications
+# We multiply by a factor which is the percentage of RM in base powder and divide to make appropriate unit
+quantiles_results_SMC<- boot((79.359*SMC$Result)/1000000, boot_quantiles_SMC, R = 10000)
+
+library(DT)
+datatable(quantiles_results_SMC$t, colnames =c("Target", "Target", "2.5 quantile", "97.5 quantile"))
+
+
+# Load broom to get a tidy dataframe as output.
+library(broom)
+tidy(quantiles_results_SMC)
+
+SMC_target <- mean(quantiles_results_SMC$t[,1])
+
+SMC_2.5   <- mean(quantiles_results_SMC$t[,3])
+SMC_97.5  <- mean(quantiles_results_SMC$t[,4])
+
+SMC_quantiles <- cbind(SMC_2.5, SMC_97.5)
+cbind(SMC_target, SMC_quantiles)
+```
+
+# sWPC80
+There are 43 measurements of iodine concentrations in sWPC80 provided by two suppliers. The scatteplot shows the concentrations over production data, for each supplier. 
+```{r}
+sWPC80<- read.table("sWPC80.txt", header=TRUE, sep="")
+
+sWPC80<- sWPC80[order(as.Date(sWPC80$Production_date, format = "%d/%m/%Y")),]
+
+p <- ggplot(sWPC80, aes(x=Production_date, y=Result, col =Hersteller, group=Hersteller))+ 
+        geom_point(size=2, shape=23) + geom_line(color="#014d64") +
+        geom_line(aes(y = 38.9), color = "red", size=0.7,  linetype = "solid") +
+        geom_line(aes(y = 20.43), color = "red", size=0.7,  linetype = "dotted") +
+        geom_line(aes(y = 57.45), color = "red", size=0.7,  linetype = "dotted") +
+        geom_line(aes(y = mean(Result)), color = "black", size=0.7,  linetype = "dotted") +
+        #gghighlight(Result> 57.45) +
+        facet_grid(Hersteller ~.)+ scale_color_jco() + scale_fill_jco()+
+        scale_x_discrete(limits=sWPC80$Production_date)+
+        theme_classic() + xlab("Production Date") + ylab("Iodine levels")+ theme(panel.border = element_blank(), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+                                                                        panel.grid.major = element_blank(),
+                                                                        panel.grid.minor = element_blank())
+
+p + labs(title = "sWPC80 Powder")
+```
+
+## Try bootstrapping 
+Similarly we draw 10000 samples with replacement from the original dataset of 43 measurements and record the statistics of interest, mean and two percentiles, $2.5\%$ and $97.5\%$ of iodine concentrations samples'.
+```{r}
+set.seed(1)
+boot_quantiles_sWPC80<- function(original_vector, resample_vector) {
+  cbind(mean(original_vector[resample_vector]), quantile(original_vector[resample_vector], c(0.025, 0.975)) )
+}
+
+# R is number of replications
+# We multiply with appropriate factor 
+quantiles_results_sWPC80<- boot((1.282*sWPC80$Result)/1000000, boot_quantiles_sWPC80, R = 10000)
+
+datatable(quantiles_results_sWPC80$t, colnames =c("Target", "Target", "2.5 quantile", "97.5 quantile"))
+
+sWPC80_target <- mean(quantiles_results_sWPC80$t[,1])
+
+sWPC80_2.5   <- mean(quantiles_results_sWPC80$t[,3])
+sWPC80_97.5  <- mean(quantiles_results_sWPC80$t[,4])
+
+sWPC80_quantiles <- cbind(sWPC80_2.5, sWPC80_97.5)
+cbind(sWPC80_target, sWPC80_quantiles)
+```
+
+# sWPC35 
+There are 11 measurements of iodine concentrations in sWPC35.
+```{r}
+sWPC35<- read.table("sWPC35.txt", header=TRUE, sep="")
+sWPC35
+
+sWPC35<- sWPC35[order(as.Date(sWPC35$Production_date, format = "%d/%m/%Y")),]
+
+p <- ggplot(sWPC35, aes(x=Production_date, y=Result, group=Material))+  
+  geom_point(size=2, shape=23) + geom_line(color="#014d64")+
+  geom_line(aes(y =136.77), color = "red", size=0.7,  linetype = "solid") +
+  geom_line(aes(y = 112.14), color = "red", size=0.7,  linetype = "dotted") +
+  geom_line(aes(y = 161.4), color = "red", size=0.7,  linetype = "dotted") +
+  facet_grid(Hersteller ~.)+ 
+  scale_x_discrete(limits=sWPC35$Production_date)+
+  theme_classic() + xlab("Production Date") + ylab("Iodine levels")+ theme(panel.border = element_blank(), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+                                                                           panel.grid.major = element_blank(),
+                                                                           panel.grid.minor = element_blank())
+
+p + labs(title = "sWPC35")
+```
+
+## Try bootstrapping 
+```{r}
+set.seed(1)
+# Create a function to take a resample of the values, # and then calculate the mean
+boot_quantiles_sWPC35<- function(original_vector, resample_vector) {
+  cbind(mean(original_vector[resample_vector]), quantile(original_vector[resample_vector], c(0.025, 0.975)) )
+}
+
+# R is number of replications
+# Multiply with appropriate factor 
+quantiles_results_sWPC35<- boot((2.856*sWPC35$Result)/1000000, boot_quantiles_sWPC35, R = 10000)
+
+datatable(quantiles_results_sWPC35$t, colnames =c("Target", "Target", "2.5 quantile", "97.5 quantile"))
+
+sWPC35_target <- mean(quantiles_results_sWPC35$t[,1])
+
+sWPC35_2.5   <- mean(quantiles_results_sWPC35$t[,3])
+sWPC35_97.5  <- mean(quantiles_results_sWPC35$t[,4])
+
+sWPC35_quantiles <- cbind(sWPC35_2.5, sWPC35_97.5)
+cbind(sWPC35_target, sWPC35_quantiles)
+```
+
+# Total concentration of iodine in Basepowder 
+Now we aggregate over the distributed variables per RM to calculate the mean concentration of **Iodine in BP** and similarly for the two percentiles, $2.5\%$ and $97.5\%$. For Gos syrup and WPC 80 liquid, we use the data from excel file 'Next level MD2.0 - Iodine' where no variation was assumed.
+
+```{r}
+iodine_target  <-  (SMC_target + sWPC80_target + sWPC35_target + 0.0005390 + 0.0000764)/100
+iodine_2.5     <-  (SMC_2.5 + sWPC80_2.5 + sWPC35_2.5 + 0.0005390 + 0.0000764)/100
+iodine_97.5    <-  (SMC_97.5 + sWPC80_97.5 + sWPC35_97.5 + 0.0005390 + 0.0000764)/100
+
+iodine_quantiles <- cbind(iodine_target, iodine_2.5, iodine_97.5)
+round(iodine_quantiles,8)
+```
+
+# Comparing with current approach
+For iodine the current approach implemented by PD gives the following result for target (min, max): 0.0000318 (0.000026, 0.0000378).
+
+# Make parametric assumptions for normality for each of the ingredients distributions to compare with approach from RM program
+Using the data from suppliers, we can assumed a normal distribution for each of the RM where some variation was provided and use error propagation to calculate the uncertainty of iodine concentration as the square root of the sum of the standard deviations of the RM samples'.
+```{r,warning=FALSE,message=FALSE}
+library(propagate)
+SMCsim1    <- rnorm(1000,  26.45,   sd = 3.11) # 1e6
+# multiply distribution of SMC with contribution of raw materal in BP
+weightSMC <- 79.359
+SMC_dist <- (weightSMC*SMCsim1)/1000000
+
+sWPCsim1   <- rnorm(1000, 36.465,  sd = 9.66)
+weightsWPC80 <- 1.282
+sWPC80_dist  <- (weightsWPC80*sWPCsim1)/1000000
+
+
+sWPC35sim1   <- rnorm(1000, 136.76,  sd = 12.31634)
+weightsWPC35 <- 2.856
+sWPC35_dist  <- (weightsWPC35*sWPC35sim1)/1000000
+
+gos_dist     <- 14.372*rep(0.00003750,1000)
+acid80_dist  <-  6.236*rep(0.00001225,1000)
+
+EXPR1 <- expression((SMC_dist + sWPC80_dist  + sWPC35_dist +gos_dist + acid80_dist)/100)
+DF1 <- cbind(SMC_dist, sWPC80_dist, sWPC35_dist, gos_dist, acid80_dist )
+
+RES1 <- propagate(expr = EXPR1, data = DF1, type = "stat", do.sim = TRUE, verbose = TRUE, nsim = 100000)
+RES1
+
+plot(RES1)
+```
+
+# Comparison of target value derived by bootstrapping with factory measured values.
+
+Using the FULDA data from file 'Next Level M2.0 - Iodine' shared by Veerle (Buijs) we attempt a comparison of the derived target (min/max) values with the actual distribution of iodine levels in **BP 111717**. 
+
+```{r}
+Mittelwert <- c(42, 42, 32, 32, 32, 32, 29, 33, 37, 35, 44, 43, 39, 33, 34, 33, 29, 43, 36, 37, 39, 33, 38, 34, 29,
+30, 29, 32, 31, 32, 31) 
+Mit_grams <- Mittelwert/1000000
+
+plot(density(Mit_grams))
+
+# For comparison
+set.seed(123)
+Mit_dist<- rnorm(1000, 0.00003467742, 0.000004570828)
+library(ggplot2)
+dat <- data.frame(dens= c(Mit_dist, RES1$resSIM), lines = rep(c("Fulda data using normality \n assumption", "Theoretically derived"), each = 100))
+#Plot
+ggplot(dat, aes(x = dens, fill = lines)) + geom_density(alpha = 0.2)
+```
